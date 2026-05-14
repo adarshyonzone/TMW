@@ -10,10 +10,36 @@ export default async function handler(req, res) {
   if (!apiKey) return res.status(500).json({ error: 'GROQ_API_KEY not configured' });
 
   try {
-    // Vercel parses body automatically for JSON content-type
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    const messages  = body.messages  || [];
-    const maxTokens = body.max_tokens || 600;
+    const userMessages = body.messages || [];
+    const maxTokens    = body.max_tokens || 600;
+    const dataContext  = body.data_context || '';
+
+    // Detect if user wants detailed analysis
+    const lastUserMsg  = userMessages.filter(m => m.role === 'user').slice(-1)[0];
+    const lastText     = lastUserMsg ? lastUserMsg.content.toLowerCase() : '';
+    const wantsDetail  = ['detailed','elaborate','full analysis','explain more','deep dive','breakdown','report','analyse','analyze','why','forecast','predict','recommend','suggestion','insight'].some(k => lastText.includes(k));
+
+    const systemPrompt = wantsDetail
+      ? `You are TMW Assistant — AI business intelligence for The Momo Warehouse, a food delivery business in Kolkata.
+The user wants a detailed analysis. Provide thorough insights, reasoning, trends, recommendations and forecasts.
+Use the live business data provided. Structure your response clearly with short sections.
+Be analytical, operational, and insight-driven. Max 300 words.
+
+LIVE BUSINESS DATA:
+${dataContext}`
+      : `You are TMW Assistant for The Momo Warehouse.
+RESPOND BRIEFLY AND DIRECTLY. 1-3 sentences max. Facts only. No insights, no forecasts, no recommendations unless asked.
+If the answer is a list, keep it to top 3-5 items max.
+Use the live business data provided.
+
+LIVE BUSINESS DATA:
+${dataContext}`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...userMessages
+    ];
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -23,8 +49,8 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'llama-3.3-70b-versatile',
-        max_tokens: maxTokens,
-        temperature: 0.7,
+        max_tokens: wantsDetail ? 600 : 200,
+        temperature: 0.5,
         messages: messages
       })
     });
