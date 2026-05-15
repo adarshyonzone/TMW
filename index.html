@@ -2922,6 +2922,8 @@ function buildDataContext() {
   // Use LOCAL date string to avoid UTC timezone mismatch
   var pad = function(n){ return n < 10 ? '0'+n : ''+n; };
   var todayStr = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
+  var yesterdayStr = new Date(now.getTime() - 86400000);
+  yesterdayStr = yesterdayStr.getFullYear()+'-'+pad(yesterdayStr.getMonth()+1)+'-'+pad(yesterdayStr.getDate());
 
   function filterByRange(arr, start, end, field) {
     field = field || 'date';
@@ -2952,6 +2954,43 @@ function buildDataContext() {
   var wExpTot  = wExp.reduce(function(s,e){return s+(Number(e.amount)||0);},0);
   var totRev   = orders.reduce(function(s,o){return s+(Number(o.amount)||0);},0);
   var totExp   = expenses.reduce(function(s,e){return s+(Number(e.amount)||0);},0);
+
+  // === MONTHLY AGGREGATION FOR ALL HISTORICAL DATA ===
+  var monthlyOrders = {};
+  orders.forEach(function(o){
+    var month = (o.date || '').slice(0,7);
+    if(!month) return;
+    if(!monthlyOrders[month]) monthlyOrders[month] = {count:0, revenue:0, items:{}};
+    monthlyOrders[month].count++;
+    monthlyOrders[month].revenue += Number(o.amount)||0;
+    var item = o.item||o.name||'Unknown';
+    monthlyOrders[month].items[item] = (monthlyOrders[month].items[item]||0)+1;
+  });
+
+  var monthlyExpenses = {};
+  expenses.forEach(function(e){
+    var month = (e.date || '').slice(0,7);
+    if(!month) return;
+    if(!monthlyExpenses[month]) monthlyExpenses[month] = {count:0, total:0, items:{}};
+    monthlyExpenses[month].count++;
+    monthlyExpenses[month].total += Number(e.amount)||0;
+    var item = (e.desc||e.item||e.name||'General').trim();
+    if(item) monthlyExpenses[month].items[item] = (monthlyExpenses[month].items[item]||0)+(Number(e.amount)||0);
+  });
+
+  var monthlyOrdersStr = Object.entries(monthlyOrders).sort().reverse().map(function(x){
+    var m = x[0], d = x[1];
+    var topItems = Object.entries(d.items).sort(function(a,b){return b[1]-a[1];}).slice(0,5)
+      .map(function(i){return i[0]+':'+i[1];}).join(', ');
+    return m+' | Orders:'+d.count+' | Revenue:'+cur+Math.round(d.revenue)+' | Top:'+topItems;
+  }).join('\n  ');
+
+  var monthlyExpensesStr = Object.entries(monthlyExpenses).sort().reverse().map(function(x){
+    var m = x[0], d = x[1];
+    var topItems = Object.entries(d.items).sort(function(a,b){return b[1]-a[1];}).slice(0,5)
+      .map(function(i){return i[0]+':'+cur+Math.round(i[1]);}).join(', ');
+    return m+' | Entries:'+d.count+' | Total:'+cur+Math.round(d.total)+' | Top:'+topItems;
+  }).join('\n  ');
 
   // All orders ranked by item
   var iMap={}, iRev={}, iDates={};
@@ -2995,26 +3034,6 @@ function buildDataContext() {
   var expCats = Object.entries(cMap).sort(function(a,b){return b[1]-a[1];})
     .map(function(x){return x[0]+': '+cur+Math.round(x[1]);}).join(' | ');
 
-  // Recent 10 orders
-  var recent = orders.slice(0,10).map(function(o){
-    return (o.date||'?')+' | '+(o.item||'?')+' | '+(o.platform||'?')+' | '+cur+(o.amount||0)+' | '+(o.status||'?');
-  }).join(' | ');
-
-  // Recent 10 expenses
-  var recentExp = expenses.slice(0,10).map(function(e){
-    return (e.date||'?')+' | '+(e.category||'?')+' | '+(e.desc||e.item||'?')+' | '+cur+(e.amount||0);
-  }).join(' | ');
-
-  // Day-by-day this month
-  var dayMap={};
-  mOrders.forEach(function(o){var d=o.date||'?';dayMap[d]=(dayMap[d]||0)+(Number(o.amount)||0);});
-  var dailyRev = Object.entries(dayMap).sort().map(function(x){return x[0]+': '+cur+Math.round(x[1]);}).join(', ');
-
-  // Menu
-  var menuStr = menu.map(function(m){return m.name+' ('+cur+m.price+', '+m.category+')';}).join(', ');
-
-
-
   // All orders sorted by amount — for "highest order" type queries
   var allOrdersSorted = orders.slice().sort(function(a,b){return (Number(b.amount)||0)-(Number(a.amount)||0);});
   var orderDetails = allOrdersSorted.slice(0,20).map(function(o,i){
@@ -3026,17 +3045,33 @@ function buildDataContext() {
   var todayExpTot = todayExp.reduce(function(s,e){return s+(Number(e.amount)||0);},0);
   var todayExpList= todayExp.map(function(e){return (e.desc||e.item||e.name||'?')+': '+cur+(e.amount||0);}).join(', ');
 
+  // Yesterday expenses — explicit list
+  var yestExp    = expenses.filter(function(e){ return (e.date||'').slice(0,10) === yesterdayStr; });
+  var yestExpTot = yestExp.reduce(function(s,e){return s+(Number(e.amount)||0);},0);
+  var yestExpList= yestExp.map(function(e){return (e.desc||e.item||e.name||'?')+': '+cur+(e.amount||0);}).join(', ');
+
   // Today orders — explicit list
   var todayOrdList= tOrders.map(function(o){return (o.item||o.name||'?')+': '+cur+(o.amount||0);}).join(', ');
 
+  // Day-by-day this month
+  var dayMap={};
+  mOrders.forEach(function(o){var d=o.date||'?';dayMap[d]=(dayMap[d]||0)+(Number(o.amount)||0);});
+  var dailyRev = Object.entries(dayMap).sort().map(function(x){return x[0]+': '+cur+Math.round(x[1]);}).join(', ');
+
+  // Menu
+  var menuStr = menu.map(function(m){return m.name+' ('+cur+m.price+', '+m.category+')';}).join(', ');
+
   return 'LIVE BUSINESS DATA — TMW The Momowarehouse\n'
-    +'Date today (local): '+todayStr+' | Full datetime: '+now.toString()+'\n'
+    +'Date today (local): '+todayStr+' | Yesterday: '+yesterdayStr+' | Full datetime: '+now.toString()+'\n'
     +'Currency: '+cur+'\n\n'
     +'=== TODAY ('+todayStr+') ===\n'
     +'Orders: '+tOrders.length+' | Revenue: '+cur+Math.round(tRev)+'\n'
     +'Order items today: '+(todayOrdList||'none')+'\n'
     +'Expenses today: '+todayExp.length+' entries | Total: '+cur+Math.round(todayExpTot)+'\n'
     +'Expense items today: '+(todayExpList||'none')+'\n\n'
+    +'=== YESTERDAY ('+yesterdayStr+') ===\n'
+    +'Expenses yesterday: '+yestExp.length+' entries | Total: '+cur+Math.round(yestExpTot)+'\n'
+    +'Expense items yesterday: '+(yestExpList||'none')+'\n\n'
     +'=== THIS WEEK ===\n'
     +'Orders: '+wOrders.length+' | Revenue: '+cur+Math.round(wRev)+' | Expenses: '+cur+Math.round(wExpTot)+' | Profit: '+cur+Math.round(wRev-wExpTot)+'\n\n'
     +'=== THIS MONTH ===\n'
@@ -3055,10 +3090,11 @@ function buildDataContext() {
     +'=== ALL ORDERS RANKED BY AMOUNT (TOP 20) ===\n  '+orderDetails+'\n\n'
     +'=== ALL ITEMS RANKED BY ORDER COUNT ===\n  '+topItems+'\n\n'
     +'=== PLATFORM BREAKDOWN ===\n'+platforms+'\n\n'
+    +'=== MONTHLY ORDERS (ALL HISTORY) ===\n  '+(monthlyOrdersStr||'No data')+'\n\n'
+    +'=== MONTHLY EXPENSES (ALL HISTORY) ===\n  '+(monthlyExpensesStr||'No data')+'\n\n'
     +'=== ALL EXPENSE ITEMS RANKED ===\n  '+topExpItems+'\n\n'
     +'=== EXPENSE CATEGORIES ===\n'+expCats+'\n\n'
     +'=== DAILY REVENUE THIS MONTH ===\n'+dailyRev+'\n\n'
-    +'=== RECENT 10 EXPENSES ===\n  '+recentExp+'\n\n'
     +'=== MENU ('+menu.length+' items) ===\n'+menuStr;
 }
 
