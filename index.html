@@ -2919,18 +2919,16 @@ function buildDataContext() {
   var s        = window.state    || {};
   var cur      = (s.settings && s.settings.currency) || 'Rs.';
 
-  // Use LOCAL date string to avoid UTC timezone mismatch
   var pad = function(n){ return n < 10 ? '0'+n : ''+n; };
   var todayStr = now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
-  var yesterdayStr = new Date(now.getTime() - 86400000);
-  yesterdayStr = yesterdayStr.getFullYear()+'-'+pad(yesterdayStr.getMonth()+1)+'-'+pad(yesterdayStr.getDate());
+  var yest = new Date(now.getTime() - 86400000);
+  var yestStr = yest.getFullYear()+'-'+pad(yest.getMonth()+1)+'-'+pad(yest.getDate());
 
   function filterByRange(arr, start, end, field) {
     field = field || 'date';
     return arr.filter(function(r){ var d=r[field]?new Date(r[field]):null; return d&&d>=start&&d<=end; });
   }
 
-  // Periods
   var mStart   = new Date(now.getFullYear(), now.getMonth(), 1);
   var mEnd     = new Date(now);
   var lmStart  = new Date(now.getFullYear(), now.getMonth()-1, 1);
@@ -2955,147 +2953,111 @@ function buildDataContext() {
   var totRev   = orders.reduce(function(s,o){return s+(Number(o.amount)||0);},0);
   var totExp   = expenses.reduce(function(s,e){return s+(Number(e.amount)||0);},0);
 
-  // === MONTHLY AGGREGATION FOR ALL HISTORICAL DATA ===
-  var monthlyOrders = {};
+  // === ALL MONTHS (compressed) ===
+  var mo={}, me={};
   orders.forEach(function(o){
-    var month = (o.date || '').slice(0,7);
-    if(!month) return;
-    if(!monthlyOrders[month]) monthlyOrders[month] = {count:0, revenue:0, items:{}};
-    monthlyOrders[month].count++;
-    monthlyOrders[month].revenue += Number(o.amount)||0;
-    var item = o.item||o.name||'Unknown';
-    monthlyOrders[month].items[item] = (monthlyOrders[month].items[item]||0)+1;
+    var m=(o.date||'').slice(0,7); if(!m) return;
+    if(!mo[m]) mo[m]={c:0,r:0,i:{}};
+    mo[m].c++; mo[m].r+=Number(o.amount)||0;
+    var n=o.item||o.name||'?'; mo[m].i[n]=(mo[m].i[n]||0)+1;
   });
-
-  var monthlyExpenses = {};
   expenses.forEach(function(e){
-    var month = (e.date || '').slice(0,7);
-    if(!month) return;
-    if(!monthlyExpenses[month]) monthlyExpenses[month] = {count:0, total:0, items:{}};
-    monthlyExpenses[month].count++;
-    monthlyExpenses[month].total += Number(e.amount)||0;
-    var item = (e.desc||e.item||e.name||'General').trim();
-    if(item) monthlyExpenses[month].items[item] = (monthlyExpenses[month].items[item]||0)+(Number(e.amount)||0);
+    var m=(e.date||'').slice(0,7); if(!m) return;
+    if(!me[m]) me[m]={c:0,t:0,i:{}};
+    me[m].c++; me[m].t+=Number(e.amount)||0;
+    var n=(e.desc||e.item||e.name||'G').trim(); if(n) me[m].i[n]=(me[m].i[n]||0)+(Number(e.amount)||0);
   });
+  var moStr = Object.entries(mo).sort().reverse().map(function(x){
+    var m=x[0],d=x[1];
+    var ti=Object.entries(d.i).sort(function(a,b){return b[1]-a[1];}).slice(0,3).map(function(i){return i[0]+':'+i[1];}).join(',');
+    return m+'|O:'+d.c+'|R:'+Math.round(d.r)+'|I:'+ti;
+  }).join('\n');
+  var meStr = Object.entries(me).sort().reverse().map(function(x){
+    var m=x[0],d=x[1];
+    var ti=Object.entries(d.i).sort(function(a,b){return b[1]-a[1];}).slice(0,3).map(function(i){return i[0]+':'+Math.round(i[1]);}).join(',');
+    return m+'|E:'+d.c+'|T:'+Math.round(d.t)+'|I:'+ti;
+  }).join('\n');
 
-  var monthlyOrdersStr = Object.entries(monthlyOrders).sort().reverse().map(function(x){
-    var m = x[0], d = x[1];
-    var topItems = Object.entries(d.items).sort(function(a,b){return b[1]-a[1];}).slice(0,5)
-      .map(function(i){return i[0]+':'+i[1];}).join(', ');
-    return m+' | Orders:'+d.count+' | Revenue:'+cur+Math.round(d.revenue)+' | Top:'+topItems;
-  }).join('\n  ');
+  // Top items all time
+  var iMap={}, iRev={};
+  orders.forEach(function(o){var n=o.item||o.name||'?';iMap[n]=(iMap[n]||0)+1;iRev[n]=(iRev[n]||0)+(Number(o.amount)||0);});
+  var topItems = Object.entries(iMap).sort(function(a,b){return b[1]-a[1];}).slice(0,15)
+    .map(function(x){return x[0]+':'+x[1]+'('+cur+Math.round(iRev[x[0]]||0)+')';}).join(', ');
 
-  var monthlyExpensesStr = Object.entries(monthlyExpenses).sort().reverse().map(function(x){
-    var m = x[0], d = x[1];
-    var topItems = Object.entries(d.items).sort(function(a,b){return b[1]-a[1];}).slice(0,5)
-      .map(function(i){return i[0]+':'+cur+Math.round(i[1]);}).join(', ');
-    return m+' | Entries:'+d.count+' | Total:'+cur+Math.round(d.total)+' | Top:'+topItems;
-  }).join('\n  ');
-
-  // All orders ranked by item
-  var iMap={}, iRev={}, iDates={};
-  orders.forEach(function(o){
-    var n=o.item||o.name||'Unknown';
-    iMap[n]=(iMap[n]||0)+1;
-    iRev[n]=(iRev[n]||0)+(Number(o.amount)||0);
-    if(!iDates[n]) iDates[n]=[];
-    if(o.date) iDates[n].push(o.date);
-  });
-  var topItems = Object.entries(iMap).sort(function(a,b){return b[1]-a[1];})
-    .map(function(x){return x[0]+' ('+x[1]+' orders, '+cur+Math.round(iRev[x[0]]||0)+')';}).join(' | ');
-
-  // This month items
+  // Top items this month
   var miMap={};
   mOrders.forEach(function(o){var n=o.item||o.name||'?';miMap[n]=(miMap[n]||0)+1;});
-  var mTopItems = Object.entries(miMap).sort(function(a,b){return b[1]-a[1];})
+  var mTopItems = Object.entries(miMap).sort(function(a,b){return b[1]-a[1];}).slice(0,10)
     .map(function(x){return x[0]+':'+x[1];}).join(', ');
 
-  // Platform breakdown
+  // Platforms
   var pMap={}, pRev={};
-  orders.forEach(function(o){var p=o.platform||'Direct';pMap[p]=(pMap[p]||0)+1;pRev[p]=(pRev[p]||0)+(Number(o.amount)||0);});
+  orders.forEach(function(o){var p=o.platform||'D';pMap[p]=(pMap[p]||0)+1;pRev[p]=(pRev[p]||0)+(Number(o.amount)||0);});
   var platforms = Object.entries(pMap).sort(function(a,b){return b[1]-a[1];})
-    .map(function(x){return x[0]+': '+x[1]+' orders, '+cur+Math.round(pRev[x[0]]||0);}).join(' | ');
-
-  // All expense items ranked
-  var dMap={};
-  expenses.forEach(function(e){var d=(e.desc||e.item||e.name||'').trim();if(d)dMap[d]=(dMap[d]||0)+(Number(e.amount)||0);});
-  var topExpItems = Object.entries(dMap).sort(function(a,b){return b[1]-a[1];}).slice(0,15)
-    .map(function(x){return x[0]+': '+cur+Math.round(x[1]);}).join(' | ');
-
-  // This month expense items
-  var mdMap={};
-  mExp.forEach(function(e){var d=(e.desc||e.item||e.name||'').trim();if(d)mdMap[d]=(mdMap[d]||0)+(Number(e.amount)||0);});
-  var mExpItems = Object.entries(mdMap).sort(function(a,b){return b[1]-a[1];}).slice(0,10)
-    .map(function(x){return x[0]+': '+cur+Math.round(x[1]);}).join(', ');
+    .map(function(x){return x[0]+':'+x[1]+'('+cur+Math.round(pRev[x[0]]||0)+')';}).join(', ');
 
   // Expense categories
   var cMap={};
-  expenses.forEach(function(e){var c=e.category||'General';cMap[c]=(cMap[c]||0)+(Number(e.amount)||0);});
+  expenses.forEach(function(e){var c=e.category||'G';cMap[c]=(cMap[c]||0)+(Number(e.amount)||0);});
   var expCats = Object.entries(cMap).sort(function(a,b){return b[1]-a[1];})
-    .map(function(x){return x[0]+': '+cur+Math.round(x[1]);}).join(' | ');
+    .map(function(x){return x[0]+':'+cur+Math.round(x[1]);}).join(', ');
 
-  // All orders sorted by amount — for "highest order" type queries
+  // Top 10 orders
   var allOrdersSorted = orders.slice().sort(function(a,b){return (Number(b.amount)||0)-(Number(a.amount)||0);});
-  var orderDetails = allOrdersSorted.slice(0,20).map(function(o,i){
-    return (i+1)+'. '+(o.item||o.name||'?')+' | Customer: '+(o.customer||o.kitchen||'?')+' | Amount: '+cur+(o.amount||0)+' | Date: '+(o.date||'?')+' | Platform: '+(o.platform||'?')+' | Status: '+(o.status||'?');
-  }).join('\n  ');
+  var orderDetails = allOrdersSorted.slice(0,10).map(function(o,i){
+    return (i+1)+'.'+(o.item||o.name||'?')+'|'+cur+(o.amount||0)+'|'+(o.date||'?')+'|'+(o.platform||'?');
+  }).join('\n');
 
-  // Today expenses — explicit list
-  var todayExp    = expenses.filter(function(e){ return (e.date||'').slice(0,10) === todayStr; });
+  // Today
+  var todayExp = expenses.filter(function(e){ return (e.date||'').slice(0,10) === todayStr; });
   var todayExpTot = todayExp.reduce(function(s,e){return s+(Number(e.amount)||0);},0);
-  var todayExpList= todayExp.map(function(e){return (e.desc||e.item||e.name||'?')+': '+cur+(e.amount||0);}).join(', ');
+  var todayExpList = todayExp.map(function(e){return (e.desc||e.item||e.name||'?')+':'+cur+(e.amount||0);}).join(', ');
+  var todayOrdList = tOrders.map(function(o){return (o.item||o.name||'?')+':'+cur+(o.amount||0);}).join(', ');
 
-  // Yesterday expenses — explicit list
-  var yestExp    = expenses.filter(function(e){ return (e.date||'').slice(0,10) === yesterdayStr; });
+  // Yesterday
+  var yestExp = expenses.filter(function(e){ return (e.date||'').slice(0,10) === yestStr; });
   var yestExpTot = yestExp.reduce(function(s,e){return s+(Number(e.amount)||0);},0);
-  var yestExpList= yestExp.map(function(e){return (e.desc||e.item||e.name||'?')+': '+cur+(e.amount||0);}).join(', ');
+  var yestExpList = yestExp.map(function(e){return (e.desc||e.item||e.name||'?')+':'+cur+(e.amount||0);}).join(', ');
 
-  // Today orders — explicit list
-  var todayOrdList= tOrders.map(function(o){return (o.item||o.name||'?')+': '+cur+(o.amount||0);}).join(', ');
-
-  // Day-by-day this month
+  // Daily this month
   var dayMap={};
   mOrders.forEach(function(o){var d=o.date||'?';dayMap[d]=(dayMap[d]||0)+(Number(o.amount)||0);});
-  var dailyRev = Object.entries(dayMap).sort().map(function(x){return x[0]+': '+cur+Math.round(x[1]);}).join(', ');
+  var dailyRev = Object.entries(dayMap).sort().map(function(x){return x[0]+':'+cur+Math.round(x[1]);}).join(', ');
 
   // Menu
-  var menuStr = menu.map(function(m){return m.name+' ('+cur+m.price+', '+m.category+')';}).join(', ');
+  var menuStr = menu.map(function(m){return m.name+'('+cur+m.price+','+m.category+')';}).join(', ');
 
-  return 'LIVE BUSINESS DATA — TMW The Momowarehouse\n'
-    +'Date today (local): '+todayStr+' | Yesterday: '+yesterdayStr+' | Full datetime: '+now.toString()+'\n'
-    +'Currency: '+cur+'\n\n'
-    +'=== TODAY ('+todayStr+') ===\n'
-    +'Orders: '+tOrders.length+' | Revenue: '+cur+Math.round(tRev)+'\n'
-    +'Order items today: '+(todayOrdList||'none')+'\n'
-    +'Expenses today: '+todayExp.length+' entries | Total: '+cur+Math.round(todayExpTot)+'\n'
-    +'Expense items today: '+(todayExpList||'none')+'\n\n'
-    +'=== YESTERDAY ('+yesterdayStr+') ===\n'
-    +'Expenses yesterday: '+yestExp.length+' entries | Total: '+cur+Math.round(yestExpTot)+'\n'
-    +'Expense items yesterday: '+(yestExpList||'none')+'\n\n'
-    +'=== THIS WEEK ===\n'
-    +'Orders: '+wOrders.length+' | Revenue: '+cur+Math.round(wRev)+' | Expenses: '+cur+Math.round(wExpTot)+' | Profit: '+cur+Math.round(wRev-wExpTot)+'\n\n'
-    +'=== THIS MONTH ===\n'
-    +'Orders: '+mOrders.length+' | Revenue: '+cur+Math.round(mRev)+'\n'
-    +'Expenses: '+mExp.length+' entries | Total: '+cur+Math.round(mExpTot)+'\n'
-    +'Net Profit: '+cur+Math.round(mRev-mExpTot)+' | Margin: '+(mRev?((mRev-mExpTot)/mRev*100).toFixed(1):0)+'%\n'
-    +'Top Items this month: '+mTopItems+'\n'
-    +'Top Expense Items this month: '+mExpItems+'\n\n'
-    +'=== LAST MONTH ===\n'
-    +'Orders: '+lmOrders.length+' | Revenue: '+cur+Math.round(lmRev)+' | Expenses: '+cur+Math.round(lmExpTot)+' | Profit: '+cur+Math.round(lmRev-lmExpTot)+'\n\n'
-    +'=== ALL TIME ===\n'
-    +'Orders: '+orders.length+' | Revenue: '+cur+Math.round(totRev)+'\n'
-    +'Expenses: '+expenses.length+' | Total: '+cur+Math.round(totExp)+'\n'
-    +'Net Profit: '+cur+Math.round(totRev-totExp)+'\n'
-    +'Bills Printed: '+bills.length+'\n\n'
-    +'=== ALL ORDERS RANKED BY AMOUNT (TOP 20) ===\n  '+orderDetails+'\n\n'
-    +'=== ALL ITEMS RANKED BY ORDER COUNT ===\n  '+topItems+'\n\n'
-    +'=== PLATFORM BREAKDOWN ===\n'+platforms+'\n\n'
-    +'=== MONTHLY ORDERS (ALL HISTORY) ===\n  '+(monthlyOrdersStr||'No data')+'\n\n'
-    +'=== MONTHLY EXPENSES (ALL HISTORY) ===\n  '+(monthlyExpensesStr||'No data')+'\n\n'
-    +'=== ALL EXPENSE ITEMS RANKED ===\n  '+topExpItems+'\n\n'
-    +'=== EXPENSE CATEGORIES ===\n'+expCats+'\n\n'
-    +'=== DAILY REVENUE THIS MONTH ===\n'+dailyRev+'\n\n'
-    +'=== MENU ('+menu.length+' items) ===\n'+menuStr;
+  return 'LIVE DATA - TMW\n'
+    +'Today:'+todayStr+' Yest:'+yestStr+' C:'+cur+'\n\n'
+    +'===TODAY('+todayStr+')===\n'
+    +'O:'+tOrders.length+' R:'+cur+Math.round(tRev)+'\n'
+    +'Items:'+(todayOrdList||'none')+'\n'
+    +'E:'+todayExp.length+' ET:'+cur+Math.round(todayExpTot)+'\n'
+    +'Exp:'+(todayExpList||'none')+'\n\n'
+    +'===YESTERDAY('+yestStr+')===\n'
+    +'E:'+yestExp.length+' ET:'+cur+Math.round(yestExpTot)+'\n'
+    +'Exp:'+(yestExpList||'none')+'\n\n'
+    +'===WEEK===\n'
+    +'O:'+wOrders.length+' R:'+cur+Math.round(wRev)+' E:'+cur+Math.round(wExpTot)+' P:'+cur+Math.round(wRev-wExpTot)+'\n\n'
+    +'===MONTH===\n'
+    +'O:'+mOrders.length+' R:'+cur+Math.round(mRev)+'\n'
+    +'E:'+mExp.length+' ET:'+cur+Math.round(mExpTot)+'\n'
+    +'P:'+cur+Math.round(mRev-mExpTot)+' M:'+(mRev?((mRev-mExpTot)/mRev*100).toFixed(1):0)+'%\n'
+    +'Top:'+mTopItems+'\n\n'
+    +'===LAST MONTH===\n'
+    +'O:'+lmOrders.length+' R:'+cur+Math.round(lmRev)+' E:'+cur+Math.round(lmExpTot)+' P:'+cur+Math.round(lmRev-lmExpTot)+'\n\n'
+    +'===ALL TIME===\n'
+    +'O:'+orders.length+' R:'+cur+Math.round(totRev)+'\n'
+    +'E:'+expenses.length+' ET:'+cur+Math.round(totExp)+'\n'
+    +'P:'+cur+Math.round(totRev-totExp)+' B:'+bills.length+'\n\n'
+    +'===TOP ORDERS===\n'+orderDetails+'\n\n'
+    +'===TOP ITEMS===\n'+topItems+'\n\n'
+    +'===PLATFORMS===\n'+platforms+'\n\n'
+    +'===MONTHLY ORDERS(ALL)===\n'+moStr+'\n\n'
+    +'===MONTHLY EXPENSES(ALL)===\n'+meStr+'\n\n'
+    +'===EXP CATS===\n'+expCats+'\n\n'
+    +'===DAILY(MONTH)===\n'+dailyRev+'\n\n'
+    +'===MENU('+menu.length+')===\n'+menuStr;
 }
 
 async function sendAI(){
