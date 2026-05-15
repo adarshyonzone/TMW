@@ -48,7 +48,7 @@ ${dataContext}`;
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: '"model: "llama-3.1-8b-instant"',
         max_tokens: wantsDetail ? 600 : 200,
         temperature: 0.5,
         messages: messages
