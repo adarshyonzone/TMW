@@ -3117,10 +3117,11 @@ async function sendAI(){
     var res = await fetch('/api/ai-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+            body: JSON.stringify({
         max_tokens: 600,
         data_context: buildDataContext(),
-        messages: aiHistory
+        messages: aiHistory,
+        user_message: text
       })
     });
 
